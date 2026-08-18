@@ -7,6 +7,7 @@ const MENU_TEMP_DISABLE = "openmzl-temp-disable";
 
 const DEFAULTS = {
   enabled: true,
+  mode: "ja-en",
   ratio: 0.3,
   minTextLength: 4,
   pageListInclude: "*://*",

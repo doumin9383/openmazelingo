@@ -1,10 +1,11 @@
 // OpenMazelingo — content script
-// ページ内の日本語文を決定論的な比率で選び、Chrome内蔵の Translator API(オンデバイス翻訳)で
-// 英訳を差し込む。外部サーバーへの通信は一切行わない。
+// ページ内の文を決定論的な比率で選び、Chrome内蔵の Translator API(オンデバイス翻訳)で
+// 別言語に差し替える(ja→en / en→ja / 両方)。外部サーバーへの通信は一切行わない。
 
 (() => {
   const DEFAULTS = {
     enabled: true,
+    mode: "ja-en", // "ja-en" | "en-ja" | "both"
     ratio: 0.3,
     minTextLength: 4,
     pageListInclude: "*://*",
@@ -13,8 +14,22 @@
 
   const STATE = { ...DEFAULTS };
   const JA_RE = /[぀-ヿ㐀-䶿一-鿿]/;
-  const SENTENCE_SPLIT_RE = /([^。！？\n]*[。！？])/g;
-  const MAX_LEN = 120;
+  const EN_RE = /[A-Za-z]/;
+  // 全角(。！？)と半角(.!?)どちらの文末記号でも分割する
+  const SENTENCE_SPLIT_RE = /([^。！？.!?\n]*[。！？.!?])/g;
+  const MAX_LEN = 160;
+
+  function detectLang(sentence) {
+    if (JA_RE.test(sentence)) return "ja";
+    if (EN_RE.test(sentence)) return "en";
+    return null;
+  }
+
+  function wantsLang(lang) {
+    if (STATE.mode === "ja-en") return lang === "ja";
+    if (STATE.mode === "en-ja") return lang === "en";
+    return lang === "ja" || lang === "en"; // both
+  }
 
   // Mazelingoに倣い、ナビゲーション・フォーム・既存処理済み要素などは除外する
   const SKIP_SELECTOR = [
@@ -25,8 +40,7 @@
     ".openmzl-mix",
   ].join(",");
 
-  let translator = null;
-  let translatorState = "idle"; // idle | loading | ready | unavailable
+  const translators = new Map(); // "ja-en" | "en-ja" -> { instance, state }
   const processedNodes = new WeakSet();
   const queue = [];
   let draining = false;
@@ -104,50 +118,57 @@
     return new Set(idx.slice(0, targetCount));
   }
 
-  // ---- Translator API ----
+  // ---- Translator API(ja→en・en→jaの2方向を独立に管理) ----
 
-  async function ensureTranslator() {
-    if (translator || translatorState === "unavailable") return translator;
+  async function ensureTranslator(source, target) {
+    const key = `${source}-${target}`;
+    let entry = translators.get(key);
+    if (!entry) {
+      entry = { instance: null, state: "idle" };
+      translators.set(key, entry);
+    }
+    if (entry.instance || entry.state === "unavailable") return entry.instance;
+
     if (!("Translator" in self)) {
-      translatorState = "unavailable";
+      entry.state = "unavailable";
       console.warn(
         "[OpenMazelingo] このブラウザでは内蔵翻訳API(Translator)が利用できません。Chrome 138以降が必要です。"
       );
       return null;
     }
-    translatorState = "loading";
+    entry.state = "loading";
     try {
       const availability = await self.Translator.availability({
-        sourceLanguage: "ja",
-        targetLanguage: "en",
+        sourceLanguage: source,
+        targetLanguage: target,
       });
-      console.log(`[OpenMazelingo] Translator.availability(ja→en) = "${availability}"`);
+      console.log(`[OpenMazelingo] Translator.availability(${source}→${target}) = "${availability}"`);
       if (availability !== "available" && availability !== "downloadable" && availability !== "downloading") {
-        translatorState = "unavailable";
+        entry.state = "unavailable";
         console.warn(
-          `[OpenMazelingo] ja→en の翻訳モデルはこの端末では利用できません(availability="${availability}")。` +
+          `[OpenMazelingo] ${source}→${target} の翻訳モデルはこの端末では利用できません(availability="${availability}")。` +
             " chrome://on-device-translation-internals で言語パックの状態を確認してください。"
         );
         return null;
       }
-      translator = await self.Translator.create({
-        sourceLanguage: "ja",
-        targetLanguage: "en",
+      entry.instance = await self.Translator.create({
+        sourceLanguage: source,
+        targetLanguage: target,
         monitor(m) {
           m.addEventListener("downloadprogress", (e) => {
             console.log(
-              `[OpenMazelingo] 翻訳モデルをダウンロード中: ${Math.round(e.loaded * 100)}%`
+              `[OpenMazelingo] ${source}→${target} 翻訳モデルをダウンロード中: ${Math.round(e.loaded * 100)}%`
             );
           });
         },
       });
-      translatorState = "ready";
-      return translator;
+      entry.state = "ready";
+      return entry.instance;
     } catch (err) {
-      translatorState = "unavailable";
+      entry.state = "unavailable";
       console.error(
-        "[OpenMazelingo] 翻訳エンジンの初期化に失敗しました。" +
-          " ja↔en の言語ペアがこのChromeビルドでサポートされていないか、chrome://on-device-translation-internals で" +
+        `[OpenMazelingo] ${source}→${target} 翻訳エンジンの初期化に失敗しました。` +
+          " この言語ペアがこのChromeビルドでサポートされていないか、chrome://on-device-translation-internals で" +
           " 言語パックのダウンロードが必要な可能性があります。",
         err
       );
@@ -167,7 +188,7 @@
 
   function qualifies(sentence) {
     const trimmed = sentence.trim();
-    return trimmed.length >= STATE.minTextLength && trimmed.length <= MAX_LEN && JA_RE.test(trimmed);
+    return trimmed.length >= STATE.minTextLength && trimmed.length <= MAX_LEN;
   }
 
   function collectTextNodes(root) {
@@ -179,7 +200,12 @@
         if (!parent) return NodeFilter.FILTER_REJECT;
         if (parent.closest(SKIP_SELECTOR)) return NodeFilter.FILTER_REJECT;
         if (processedNodes.has(node)) return NodeFilter.FILTER_REJECT;
-        if (!JA_RE.test(node.textContent)) return NodeFilter.FILTER_REJECT;
+        const text = node.textContent;
+        const hasJa = JA_RE.test(text);
+        const hasEn = EN_RE.test(text);
+        if (STATE.mode === "ja-en" && !hasJa) return NodeFilter.FILTER_REJECT;
+        if (STATE.mode === "en-ja" && !hasEn) return NodeFilter.FILTER_REJECT;
+        if (STATE.mode === "both" && !hasJa && !hasEn) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
     });
@@ -188,21 +214,30 @@
     return nodes;
   }
 
+  // 対象言語ごと(ja/en)に、その言語の文の中から比率どおりの数を独立に選ぶ
   function buildFragment(textNode) {
     const sentences = splitSentences(textNode.textContent);
-    const qualifyingIdx = [];
-    sentences.forEach((s, i) => {
-      if (qualifies(s)) qualifyingIdx.push(i);
+    const langs = sentences.map((s) => (qualifies(s) ? detectLang(s) : null));
+    const groups = { ja: [], en: [] };
+    langs.forEach((lang, i) => {
+      if (lang && wantsLang(lang)) groups[lang].push(i);
     });
-    if (qualifyingIdx.length === 0) return null;
+    if (groups.ja.length === 0 && groups.en.length === 0) return null;
 
-    const seed = `${location.href}::${qualifyingIdx.map((i) => sentences[i]).join("|")}`;
-    const chosenLocal = pickIndices(qualifyingIdx.length, STATE.ratio, seed);
-    const chosen = new Set([...chosenLocal].map((i) => qualifyingIdx[i]));
+    const chosen = new Set();
+    for (const lang of ["ja", "en"]) {
+      const idxs = groups[lang];
+      if (idxs.length === 0) continue;
+      const seed = `${location.href}::${lang}::${idxs.map((i) => sentences[i]).join("|")}`;
+      const local = pickIndices(idxs.length, STATE.ratio, seed);
+      for (const li of local) chosen.add(idxs[li]);
+    }
+    if (chosen.size === 0) return null;
 
     const frag = document.createDocumentFragment();
     sentences.forEach((sentence, i) => {
       if (chosen.has(i)) {
+        const lang = langs[i];
         const span = document.createElement("span");
         span.className = "openmzl-mix";
         span.dataset.original = sentence;
@@ -210,7 +245,7 @@
         span.textContent = sentence;
         frag.appendChild(span);
         attachInteraction(span);
-        queueTranslation(span, sentence);
+        queueTranslation(span, sentence, lang);
       } else {
         frag.appendChild(document.createTextNode(sentence));
       }
@@ -220,18 +255,19 @@
 
   // ---- 翻訳キュー ----
 
-  function queueTranslation(span, sentence) {
-    queue.push({ span, sentence });
+  function queueTranslation(span, sentence, lang) {
+    queue.push({ span, sentence, lang });
     drainQueue();
   }
 
   async function drainQueue() {
     if (draining) return;
     draining = true;
-    const t = await ensureTranslator();
     while (queue.length) {
-      const { span, sentence } = queue.shift();
+      const { span, sentence, lang } = queue.shift();
       if (!span.isConnected) continue;
+      const [source, target] = lang === "ja" ? ["ja", "en"] : ["en", "ja"];
+      const t = await ensureTranslator(source, target);
       if (!t) {
         span.dataset.state = "unavailable";
         continue;
@@ -250,12 +286,14 @@
   }
 
   // ---- 表示制御(ホバーでプレビュー、クリックで固定) ----
+  // pinned は "original"(元の言語) / "translated"(訳した言語) のどちらを表示中かを表す。
+  // ja→en か en→ja かに関係なく同じロジックで扱える。
 
   function applyDisplay(span) {
     if (span.dataset.state !== "ready") return;
     if (span.matches(":hover") && !span.dataset.pinned) return; // ホバー中は既存のプレビュー表示を維持
-    const lang = span.dataset.pinned || "en";
-    span.textContent = lang === "ja" ? span.dataset.original : span.dataset.translated;
+    const variant = span.dataset.pinned || "translated";
+    span.textContent = variant === "original" ? span.dataset.original : span.dataset.translated;
   }
 
   function attachInteraction(span) {
@@ -269,11 +307,11 @@
     });
     span.addEventListener("click", () => {
       if (span.dataset.state !== "ready") return;
-      const currentlyJa = span.textContent === span.dataset.original;
-      span.dataset.pinned = currentlyJa ? "en" : "ja";
+      const currentlyOriginal = span.textContent === span.dataset.original;
+      span.dataset.pinned = currentlyOriginal ? "translated" : "original";
       span.classList.add("openmzl-pinned");
       span.textContent =
-        span.dataset.pinned === "ja" ? span.dataset.original : span.dataset.translated;
+        span.dataset.pinned === "original" ? span.dataset.original : span.dataset.translated;
     });
   }
 
@@ -309,7 +347,7 @@
     }
   }
 
-  // 既に挿入済みの英訳spanをすべて元の日本語テキストに戻す
+  // 既に挿入済みのspanをすべて元のテキストに戻す
   function revertAll() {
     document.querySelectorAll(".openmzl-mix").forEach((span) => {
       const text = document.createTextNode(span.dataset.original ?? span.textContent);

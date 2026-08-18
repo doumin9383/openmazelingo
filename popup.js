@@ -1,5 +1,6 @@
 const DEFAULTS = {
   enabled: true,
+  mode: "ja-en",
   ratio: 0.3,
   minTextLength: 4,
   pageListInclude: "*://*",
@@ -7,6 +8,7 @@ const DEFAULTS = {
 };
 
 const enabledEl = document.getElementById("enabled");
+const modeBtns = Array.from(document.querySelectorAll(".mode-btn"));
 const ratioEl = document.getElementById("ratio");
 const ratioValueEl = document.getElementById("ratioValue");
 const ratioJaValueEl = document.getElementById("ratioJaValue");
@@ -40,6 +42,7 @@ async function init() {
 
   const data = await getSettings();
   enabledEl.checked = data.enabled;
+  setActiveMode(data.mode);
   ratioEl.value = Math.round(data.ratio * 100);
   updateRatioDisplay();
   minTextLengthEl.value = data.minTextLength;
@@ -113,6 +116,18 @@ function pop(el) {
   void el.offsetWidth; // reflow でアニメーションを再始動させる
   el.classList.add("is-pop");
 }
+
+function setActiveMode(mode) {
+  modeBtns.forEach((btn) => btn.classList.toggle("is-active", btn.dataset.mode === mode));
+}
+
+modeBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setActiveMode(btn.dataset.mode);
+    pop(btn);
+    save({ mode: btn.dataset.mode });
+  });
+});
 
 enabledEl.addEventListener("change", () => save({ enabled: enabledEl.checked }));
 

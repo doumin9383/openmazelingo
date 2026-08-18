@@ -5,6 +5,12 @@
   "description": "Mazelingo風の文単位バイリンガルミックス表示を、Chrome内蔵のオンデバイス翻訳(Translator API)だけで実現するオープンな代替拡張機能。APIキー不要、外部サーバーへの通信は一切行いません。",
   "permissions": ["storage", "contextMenus"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -18,6 +24,12 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "OpenMazelingo"
+    "default_title": "OpenMazelingo",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }

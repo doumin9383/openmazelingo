@@ -29,9 +29,27 @@
       </div>
     </label>
 
+    <div class="card">
+      <span class="label">翻訳モード</span>
+      <div class="mode-toggle">
+        <button type="button" class="mode-btn" data-mode="ja-en">
+          <span class="mode-btn-main">JA→EN</span>
+          <span class="mode-btn-sub">日本語の一部を英語に</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="en-ja">
+          <span class="mode-btn-main">EN→JA</span>
+          <span class="mode-btn-sub">英語の一部を日本語に</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="both">
+          <span class="mode-btn-main">🦉 両方</span>
+          <span class="mode-btn-sub">ページ全体をミックス</span>
+        </button>
+      </div>
+    </div>
+
     <div class="card ratio-card">
       <div class="ratio-header">
-        <span class="label">英語混合率</span>
+        <span class="label">ミックス率</span>
       </div>
       <div class="wave-slider">
         <div class="wave-track">
@@ -40,8 +58,8 @@
         <input type="range" id="ratio" min="0" max="100" step="5" />
       </div>
       <div class="ratio-meta">
-        <span class="en">EN <span id="ratioValue">30%</span></span>
-        <span class="ja">JA <span id="ratioJaValue">70%</span></span>
+        <span class="en">変換 <span id="ratioValue">30%</span></span>
+        <span class="ja">そのまま <span id="ratioJaValue">70%</span></span>
       </div>
     </div>
 
