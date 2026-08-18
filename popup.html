@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenMazelingo</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="header">
+      <div class="logo" aria-hidden="true">🦉</div>
+      <div>
+        <p class="title">OpenMazelingo</p>
+        <p class="subtitle">端末内だけで完結する英語学習</p>
+      </div>
+    </div>
+
+    <label class="toggle-wrap">
+      <input type="checkbox" id="enabled" class="toggle-input" />
+      <div class="toggle-card">
+        <div class="toggle-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div>
+          <div class="toggle-title">翻訳を有効にする</div>
+          <div class="toggle-desc">ページ上の文をミックス表示</div>
+        </div>
+      </div>
+    </label>
+
+    <div class="card ratio-card">
+      <div class="ratio-header">
+        <span class="label">英語混合率</span>
+      </div>
+      <div class="wave-slider">
+        <div class="wave-track">
+          <div id="waveFill" class="wave-fill"></div>
+        </div>
+        <input type="range" id="ratio" min="0" max="100" step="5" />
+      </div>
+      <div class="ratio-meta">
+        <span class="en">EN <span id="ratioValue">30%</span></span>
+        <span class="ja">JA <span id="ratioJaValue">70%</span></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="label" for="minTextLength">最小文字数</label>
+      <input type="number" id="minTextLength" min="1" max="100" class="input num" />
+      <div class="hint">これより短い文は翻訳しません</div>
+    </div>
+
+    <div class="card">
+      <span class="label">翻訳するページ</span>
+      <div class="hint">1行1パターン。<code>*</code>がワイルドカード(例: <code>*://*</code>で全サイト)</div>
+      <textarea id="pageListInclude" class="textarea" rows="2" placeholder="*://*"></textarea>
+      <button id="addCurrentInclude" class="chip-btn" type="button">+ このサイトを追加</button>
+    </div>
+
+    <div class="card">
+      <span class="label">除外するページ</span>
+      <textarea id="pageListExclude" class="textarea" rows="2" placeholder="https://example.com/secret/*"></textarea>
+      <button id="addCurrentExclude" class="chip-btn" type="button">+ このサイトを追加</button>
+    </div>
+
+    <button id="rescan" class="primary-btn" type="button">このページを再スキャン</button>
+    <p id="status" class="status"></p>
+
+    <p class="note">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+      翻訳はChrome内蔵のオンデバイスAIで行われ、外部サーバーには一切送信されません。文にマウスを乗せると原文プレビュー、クリックで表示言語を固定できます。
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

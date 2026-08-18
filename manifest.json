@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "OpenMazelingo",
+  "version": "0.2.0",
+  "description": "Mazelingo風の文単位バイリンガルミックス表示を、Chrome内蔵のオンデバイス翻訳(Translator API)だけで実現するオープンな代替拡張機能。APIキー不要、外部サーバーへの通信は一切行いません。",
+  "permissions": ["storage", "contextMenus"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OpenMazelingo"
+  }
+}

@@ -1,0 +1,14 @@
+.openmzl-mix {
+  border-bottom: 1.5px dashed #58cc02;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.openmzl-mix:hover {
+  background-color: rgba(88, 204, 2, 0.12);
+}
+
+.openmzl-mix.openmzl-pinned {
+  border-bottom-style: solid;
+  border-bottom-color: #1cb0f6;
+}
