@@ -3,6 +3,7 @@ export const DEFAULT_CORE_OPTIONS = {
   mixRatio: 0.3,
   mode: "both",
   seed: "openmazelingo",
+  alignmentStrategy: "ordered", // ordered | strict | semantic
 };
 
 const JA_RE = /[぀-ヿ㐀-䶿一-鿿]/;
@@ -129,14 +130,218 @@ export function oppositeLang(lang) {
   return lang === "ja" ? "en" : lang === "en" ? "ja" : null;
 }
 
+function makeOrderedPairs(chunkIndex, sourceLang, sourceSentences, translatedSentences) {
+  const count = Math.max(sourceSentences.length, translatedSentences.length);
+  const pairs = [];
+  for (let i = 0; i < count; i++) {
+    const original = sourceSentences[i] || "";
+    const translated = translatedSentences[i] || "";
+    if (!original && !translated) continue;
+    pairs.push({
+      id: `${chunkIndex}:${i}`,
+      semanticUnitId: `u:${chunkIndex}:${i}`,
+      sourceSentenceIds: original ? [`s:${chunkIndex}:${i}`] : [],
+      targetSentenceIds: translated ? [`t:${chunkIndex}:${i}`] : [],
+      original,
+      translated,
+      sourceLang,
+      alignment: "ordered",
+      confidence: null,
+    });
+  }
+  return pairs;
+}
+
+function normalizeForSimilarity(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .trim();
+}
+
+function bigrams(text) {
+  const normalized = normalizeForSimilarity(text);
+  if (!normalized) return new Set();
+  if (normalized.length === 1) return new Set([normalized]);
+  const result = new Set();
+  for (let i = 0; i < normalized.length - 1; i++) result.add(normalized.slice(i, i + 2));
+  return result;
+}
+
+export function textSimilarity(a, b) {
+  const aa = bigrams(a);
+  const bb = bigrams(b);
+  if (!aa.size && !bb.size) return 1;
+  if (!aa.size || !bb.size) return 0;
+  let overlap = 0;
+  for (const gram of aa) if (bb.has(gram)) overlap++;
+  return (2 * overlap) / (aa.size + bb.size);
+}
+
+function joinRange(items, start, count) {
+  return items.slice(start, start + count).join("");
+}
+
+export function alignSemanticUnits(sourceSentences, targetSentences, backTranslations, options = {}) {
+  const mergePenalty = options.mergePenalty ?? 0.08;
+  const n = sourceSentences.length;
+  const m = targetSentences.length;
+  const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(null));
+  dp[0][0] = { score: 0, prev: null, sourceCount: 0, targetCount: 0, similarity: 1 };
+
+  const transitions = [
+    [1, 1],
+    [1, 2],
+    [2, 1],
+  ];
+
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= m; j++) {
+      const cell = dp[i][j];
+      if (!cell) continue;
+      for (const [sourceCount, targetCount] of transitions) {
+        if (i + sourceCount > n || j + targetCount > m) continue;
+        const sourceText = joinRange(sourceSentences, i, sourceCount);
+        const backText = joinRange(backTranslations, j, targetCount);
+        const similarity = textSimilarity(sourceText, backText);
+        const penalty = (sourceCount + targetCount - 2) * mergePenalty;
+        const score = cell.score + similarity - penalty;
+        const next = dp[i + sourceCount][j + targetCount];
+        if (!next || score > next.score) {
+          dp[i + sourceCount][j + targetCount] = {
+            score,
+            prev: [i, j],
+            sourceCount,
+            targetCount,
+            similarity,
+          };
+        }
+      }
+    }
+  }
+
+  if (!dp[n][m]) return null;
+
+  const units = [];
+  let i = n;
+  let j = m;
+  while (i > 0 || j > 0) {
+    const cell = dp[i][j];
+    if (!cell?.prev) return null;
+    const [pi, pj] = cell.prev;
+    units.push({
+      sourceStart: pi,
+      targetStart: pj,
+      sourceCount: cell.sourceCount,
+      targetCount: cell.targetCount,
+      similarity: cell.similarity,
+    });
+    i = pi;
+    j = pj;
+  }
+  return units.reverse();
+}
+
+async function buildStrictPairs({ original, sourceLang, targetLang, chunkIndex, translateChunk, previousChunk }) {
+  const sourceSentences = splitSentences(original);
+  const pairs = [];
+  for (let i = 0; i < sourceSentences.length; i++) {
+    const sourceSentence = sourceSentences[i];
+    const translated = await translateChunk({
+      text: sourceSentence,
+      sourceLang,
+      targetLang,
+      chunkIndex,
+      sentenceIndex: i,
+      previousChunk,
+      strategy: "strict",
+    });
+    pairs.push({
+      id: `${chunkIndex}:${i}`,
+      semanticUnitId: `u:${chunkIndex}:${i}`,
+      sourceSentenceIds: [`s:${chunkIndex}:${i}`],
+      targetSentenceIds: [`t:${chunkIndex}:${i}`],
+      original: sourceSentence,
+      translated: translated || "",
+      sourceLang,
+      alignment: "strict",
+      confidence: 1,
+    });
+  }
+  return { translated: pairs.map((p) => p.translated).join(""), sentencePairs: pairs };
+}
+
+async function buildSemanticPairs({ original, sourceLang, targetLang, chunkIndex, translateChunk, backTranslate, previousChunk }) {
+  const translated = await translateChunk({
+    text: original,
+    sourceLang,
+    targetLang,
+    chunkIndex,
+    previousChunk,
+    strategy: "semantic",
+  });
+  const sourceSentences = splitSentences(original);
+  const targetSentences = splitSentences(translated || "");
+  if (!sourceSentences.length || !targetSentences.length || !backTranslate) {
+    return {
+      translated,
+      sentencePairs: makeOrderedPairs(chunkIndex, sourceLang, sourceSentences, targetSentences),
+      semanticFallback: true,
+    };
+  }
+
+  const backTranslations = [];
+  for (let i = 0; i < targetSentences.length; i++) {
+    backTranslations.push(await backTranslate({
+      text: targetSentences[i],
+      sourceLang: targetLang,
+      targetLang: sourceLang,
+      chunkIndex,
+      sentenceIndex: i,
+      strategy: "semantic-backtranslation",
+    }));
+  }
+
+  const alignment = alignSemanticUnits(sourceSentences, targetSentences, backTranslations);
+  if (!alignment) {
+    return {
+      translated,
+      sentencePairs: makeOrderedPairs(chunkIndex, sourceLang, sourceSentences, targetSentences),
+      semanticFallback: true,
+    };
+  }
+
+  const sentencePairs = alignment.map((unit, unitIndex) => {
+    const sourceIds = Array.from({ length: unit.sourceCount }, (_, offset) => `s:${chunkIndex}:${unit.sourceStart + offset}`);
+    const targetIds = Array.from({ length: unit.targetCount }, (_, offset) => `t:${chunkIndex}:${unit.targetStart + offset}`);
+    return {
+      id: `${chunkIndex}:${unitIndex}`,
+      semanticUnitId: `u:${chunkIndex}:${unitIndex}`,
+      sourceSentenceIds: sourceIds,
+      targetSentenceIds: targetIds,
+      original: joinRange(sourceSentences, unit.sourceStart, unit.sourceCount),
+      translated: joinRange(targetSentences, unit.targetStart, unit.targetCount),
+      sourceLang,
+      alignment: "semantic",
+      confidence: unit.similarity,
+    };
+  });
+
+  return { translated, sentencePairs, backTranslations, semanticFallback: false };
+}
+
 export async function buildBilingualCache(input, translateChunk, options = {}) {
   const mergedOptions = { ...DEFAULT_CORE_OPTIONS, ...options };
   const chunks = chunkText(input, mergedOptions.chunkSize);
   const documentCache = {
-    version: 1,
+    version: 2,
     sourceHash: hashString(normalizeText(input)).toString(16),
     createdAt: new Date().toISOString(),
-    options: { chunkSize: mergedOptions.chunkSize },
+    options: {
+      chunkSize: mergedOptions.chunkSize,
+      alignmentStrategy: mergedOptions.alignmentStrategy,
+    },
     chunks: [],
   };
 
@@ -145,29 +350,46 @@ export async function buildBilingualCache(input, translateChunk, options = {}) {
     const sourceLang = detectLang(original);
     if (!sourceLang) continue;
     const targetLang = oppositeLang(sourceLang);
-    const translated = await translateChunk({
-      text: original,
-      sourceLang,
-      targetLang,
-      chunkIndex,
-      previousChunk: documentCache.chunks.at(-1)?.original || "",
-    });
+    const previousChunk = documentCache.chunks.at(-1)?.original || "";
+    let result;
 
-    const sourceSentences = splitSentences(original);
-    const translatedSentences = splitSentences(translated || "");
-    const sentenceCount = Math.max(sourceSentences.length, translatedSentences.length);
-    const sentencePairs = [];
-
-    for (let i = 0; i < sentenceCount; i++) {
-      const sourceSentence = sourceSentences[i] || "";
-      const translatedSentence = translatedSentences[i] || "";
-      if (!sourceSentence && !translatedSentence) continue;
-      sentencePairs.push({
-        id: `${chunkIndex}:${i}`,
-        original: sourceSentence,
-        translated: translatedSentence,
+    if (mergedOptions.alignmentStrategy === "strict") {
+      result = await buildStrictPairs({
+        original,
         sourceLang,
+        targetLang,
+        chunkIndex,
+        translateChunk,
+        previousChunk,
       });
+    } else if (mergedOptions.alignmentStrategy === "semantic") {
+      result = await buildSemanticPairs({
+        original,
+        sourceLang,
+        targetLang,
+        chunkIndex,
+        translateChunk,
+        backTranslate: mergedOptions.backTranslate,
+        previousChunk,
+      });
+    } else {
+      const translated = await translateChunk({
+        text: original,
+        sourceLang,
+        targetLang,
+        chunkIndex,
+        previousChunk,
+        strategy: "ordered",
+      });
+      result = {
+        translated,
+        sentencePairs: makeOrderedPairs(
+          chunkIndex,
+          sourceLang,
+          splitSentences(original),
+          splitSentences(translated || "")
+        ),
+      };
     }
 
     documentCache.chunks.push({
@@ -175,8 +397,10 @@ export async function buildBilingualCache(input, translateChunk, options = {}) {
       sourceLang,
       targetLang,
       original,
-      translated,
-      sentencePairs,
+      translated: result.translated,
+      sentencePairs: result.sentencePairs,
+      backTranslations: result.backTranslations,
+      semanticFallback: result.semanticFallback || false,
     });
   }
 
