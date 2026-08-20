@@ -6,6 +6,7 @@ import {
 
 const sourceTextEl = document.getElementById("sourceText");
 const modeEl = document.getElementById("mode");
+const alignmentStrategyEl = document.getElementById("alignmentStrategy");
 const mixRatioEl = document.getElementById("mixRatio");
 const mixRatioValueEl = document.getElementById("mixRatioValue");
 const chunkSizeEl = document.getElementById("chunkSize");
@@ -28,7 +29,9 @@ function options() {
     chunkSize: Math.max(200, Number(chunkSizeEl.value) || 900),
     mixRatio: Number(mixRatioEl.value) / 100,
     mode: modeEl.value,
+    alignmentStrategy: alignmentStrategyEl.value,
     seed: cache?.sourceHash || "openmazelingo-web",
+    backTranslate,
   };
 }
 
@@ -56,14 +59,31 @@ async function ensureTranslator(sourceLang, targetLang) {
   return instance;
 }
 
-async function translateChunk({ text, sourceLang, targetLang, chunkIndex }) {
-  setStatus(`Translating chunk ${chunkIndex + 1}…`);
+async function runTranslation({ text, sourceLang, targetLang }) {
+  const translator = await ensureTranslator(sourceLang, targetLang);
+  if (!translator) return text;
+  return translator.translate(text);
+}
+
+async function translateChunk({ text, sourceLang, targetLang, chunkIndex, sentenceIndex, strategy }) {
+  const position = sentenceIndex == null
+    ? `chunk ${chunkIndex + 1}`
+    : `chunk ${chunkIndex + 1}, sentence ${sentenceIndex + 1}`;
+  setStatus(`${strategy || "translation"}: ${position}…`);
   try {
-    const translator = await ensureTranslator(sourceLang, targetLang);
-    if (!translator) return text;
-    return await translator.translate(text);
+    return await runTranslation({ text, sourceLang, targetLang });
   } catch (error) {
     console.warn("[OpenMazelingo Web] translation fallback", error);
+    return text;
+  }
+}
+
+async function backTranslate({ text, sourceLang, targetLang, chunkIndex, sentenceIndex }) {
+  setStatus(`semantic align: chunk ${chunkIndex + 1}, back-translate ${sentenceIndex + 1}…`);
+  try {
+    return await runTranslation({ text, sourceLang, targetLang });
+  } catch (error) {
+    console.warn("[OpenMazelingo Web] back-translation fallback", error);
     return text;
   }
 }
@@ -79,15 +99,21 @@ function render() {
     span.className = `sentence lang-${sentence.displayLang || sentence.sourceLang || "unknown"}`;
     if (sentence.useTranslation && sentence.translated) span.classList.add("translated");
     span.textContent = sentence.displayText;
+
+    const confidence = Number.isFinite(sentence.confidence)
+      ? ` / alignment ${sentence.alignment} ${(sentence.confidence * 100).toFixed(0)}%`
+      : ` / alignment ${sentence.alignment || "unknown"}`;
     span.title = sentence.useTranslation && sentence.translated
-      ? `Original: ${sentence.original}`
+      ? `Original: ${sentence.original}${confidence}`
       : sentence.translated
-        ? `Translation: ${sentence.translated}`
-        : "Translation unavailable";
+        ? `Translation: ${sentence.translated}${confidence}`
+        : `Translation unavailable${confidence}`;
     resultEl.appendChild(span);
   }
 
-  cacheInfoEl.textContent = `${cache.chunks.length} chunks / ${pairs.length} sentences / cache ${cache.sourceHash}`;
+  const fallbackCount = cache.chunks.filter((chunk) => chunk.semanticFallback).length;
+  const fallbackInfo = fallbackCount ? ` / semantic fallback ${fallbackCount}` : "";
+  cacheInfoEl.textContent = `${cache.chunks.length} chunks / ${pairs.length} units / ${cache.options.alignmentStrategy}${fallbackInfo} / cache ${cache.sourceHash}`;
 }
 
 async function generate() {
@@ -107,7 +133,7 @@ async function generate() {
     render();
     remixBtn.disabled = false;
     downloadCacheBtn.disabled = false;
-    setStatus("Done. 翻訳結果はメモリ上の bilingual cache に保持されています。");
+    setStatus(`Done. ${cache.options.alignmentStrategy} alignment で bilingual cache を生成しました。`);
   } catch (error) {
     console.error(error);
     setStatus(`Failed: ${error.message || error}`);
@@ -122,7 +148,7 @@ function downloadCache() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `openmazelingo-${cache.sourceHash}.json`;
+  a.download = `openmazelingo-${cache.sourceHash}-${cache.options.alignmentStrategy}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -132,6 +158,9 @@ mixRatioEl.addEventListener("input", () => {
   if (cache) render();
 });
 modeEl.addEventListener("change", () => cache && render());
+alignmentStrategyEl.addEventListener("change", () => {
+  if (cache) setStatus("Alignment strategy を変えたので Generate でキャッシュを再生成してください。");
+});
 generateBtn.addEventListener("click", generate);
 remixBtn.addEventListener("click", render);
 downloadCacheBtn.addEventListener("click", downloadCache);

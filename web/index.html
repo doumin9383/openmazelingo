@@ -26,6 +26,13 @@
             <option value="en-ja">EN → JA</option>
           </select>
         </label>
+        <label>Alignment
+          <select id="alignmentStrategy">
+            <option value="ordered">Ordered baseline</option>
+            <option value="strict">Strict sentence-by-sentence</option>
+            <option value="semantic">Natural chunk + semantic align</option>
+          </select>
+        </label>
         <label>Mix ratio
           <input id="mixRatio" type="range" min="0" max="100" value="30" />
           <span id="mixRatioValue">30%</span>
@@ -52,9 +59,11 @@
     </section>
 
     <section class="panel note">
-      <h2>Prototype translator</h2>
-      <p>Chrome の Translator API が使える環境ではオンデバイス翻訳します。使えない場合は原文をそのまま返し、キャッシュ・チャンク化・mix処理だけを確認できます。</p>
-      <p>TTS / OpenAI-compatible API は次段階で adapter として追加する前提です。</p>
+      <h2>Alignment experiments</h2>
+      <p><strong>Ordered baseline</strong> は従来どおり、チャンク全文を翻訳して句読点順に対応付けます。</p>
+      <p><strong>Strict</strong> は文ごとに個別翻訳し、対応関係を確実に保ちます。自然さ・文脈利用とのトレードオフ比較用です。</p>
+      <p><strong>Semantic</strong> はチャンク全文を自然に翻訳した後、訳文を原言語へ逆翻訳し、意味近似で 1:1 / 1:多 / 多:1 の semantic unit に再配置します。</p>
+      <p>Chrome の Translator API が使えない環境では原文フォールバックになるため、semantic alignment の品質比較には翻訳APIが必要です。</p>
     </section>
   </main>
   <script type="module" src="./app.js"></script>
