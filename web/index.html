@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenMazelingo Web Prototype</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">OpenMazelingo</p>
+      <h1>Text mixer prototype</h1>
+      <p class="muted">テキストをチャンク翻訳して日英ペアをキャッシュし、決定論的にごちゃ混ぜ表示します。</p>
+    </header>
+
+    <section class="panel">
+      <label for="sourceText">Input text</label>
+      <textarea id="sourceText" rows="12" placeholder="日本語またはEnglishのテキストを貼り付け"></textarea>
+
+      <div class="controls">
+        <label>Mode
+          <select id="mode">
+            <option value="both">Both</option>
+            <option value="ja-en">JA → EN</option>
+            <option value="en-ja">EN → JA</option>
+          </select>
+        </label>
+        <label>Alignment
+          <select id="alignmentStrategy">
+            <option value="ordered">Ordered baseline</option>
+            <option value="strict">Strict sentence-by-sentence</option>
+            <option value="semantic">Natural chunk + semantic align</option>
+          </select>
+        </label>
+        <label>Mix ratio
+          <input id="mixRatio" type="range" min="0" max="100" value="30" />
+          <span id="mixRatioValue">30%</span>
+        </label>
+        <label>Chunk chars
+          <input id="chunkSize" type="number" min="200" max="4000" step="100" value="900" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="generate">Generate</button>
+        <button id="remix" class="secondary" disabled>Remix cached text</button>
+        <button id="downloadCache" class="secondary" disabled>Download cache JSON</button>
+      </div>
+      <p id="status" class="status"></p>
+    </section>
+
+    <section class="panel">
+      <div class="result-head">
+        <h2>Mixed result</h2>
+        <span id="cacheInfo" class="muted"></span>
+      </div>
+      <article id="result" class="result"></article>
+    </section>
+
+    <section class="panel note">
+      <h2>Alignment experiments</h2>
+      <p><strong>Ordered baseline</strong> は従来どおり、チャンク全文を翻訳して句読点順に対応付けます。</p>
+      <p><strong>Strict</strong> は文ごとに個別翻訳し、対応関係を確実に保ちます。自然さ・文脈利用とのトレードオフ比較用です。</p>
+      <p><strong>Semantic</strong> はチャンク全文を自然に翻訳した後、訳文を原言語へ逆翻訳し、意味近似で 1:1 / 1:多 / 多:1 の semantic unit に再配置します。</p>
+      <p>Chrome の Translator API が使えない環境では原文フォールバックになるため、semantic alignment の品質比較には翻訳APIが必要です。</p>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
